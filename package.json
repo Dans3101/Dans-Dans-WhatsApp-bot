@@ -1,7 +1,7 @@
 {
   "name": "dans-dan",
   "version": "2.0.0",
-  "description": "DansDan WhatsApp bot with live connection tracker, Telegram QR sender, and Baileys MD support.",
+  "description": "DansDan WhatsApp bot with live connection tracker and Telegram QR delivery.",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -11,33 +11,19 @@
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc.6",
     "@hapi/boom": "^10.0.1",
-    "axios": "^1.7.2",
-    "chalk": "^5.3.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "fs-extra": "^11.2.0",
-    "moment-timezone": "^0.5.45",
-    "node-fetch": "^3.3.2",
-    "pino": "^9.2.0",
     "qrcode": "^1.5.4",
-    "sharp": "^0.33.2",
-    "telegraf": "^4.16.3"
+    "telegraf": "^4.16.3",
+    "pino": "^9.2.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.0",
     "eslint": "^9.10.0"
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=20.x"
   },
-  "keywords": [
-    "whatsapp-bot",
-    "baileys",
-    "nodejs",
-    "telegram",
-    "dansdan",
-    "render"
-  ],
   "author": "Dans Code",
   "license": "MIT"
 }
