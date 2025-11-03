@@ -1,132 +1,51 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DansBot Dashboard</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DansDan Dashboard</title>
   <style>
-    body {
-      font-family: 'Segoe UI', Arial, sans-serif;
-      text-align: center;
-      background: #f7f8fa;
-      padding: 40px;
-      color: #333;
-    }
-    h1 {
-      color: #0078d7;
-    }
-    .status {
-      font-size: 20px;
-      margin: 15px 0;
-    }
-    .connected { color: green; }
-    .connecting { color: orange; }
-    .reconnecting { color: gold; }
-    .disconnected { color: red; }
-    .idle { color: gray; }
-    .card {
-      background: white;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-      border-radius: 10px;
-      display: inline-block;
-      padding: 20px 30px;
-      margin: 20px auto;
-      width: 90%;
-      max-width: 400px;
-    }
-    img {
-      border-radius: 10px;
-      border: 1px solid #ccc;
-      width: 220px;
-    }
-    input, button {
-      padding: 8px;
-      margin-top: 10px;
-    }
-    button {
-      background: #0078d7;
-      color: white;
-      border: none;
-      cursor: pointer;
-      border-radius: 6px;
-    }
-    button:hover {
-      background: #005a9e;
-    }
-    .pairing {
-      font-size: 22px;
-      color: green;
-      font-weight: bold;
-    }
+    body{font-family:Arial,Helvetica,sans-serif;background:#f7f8fb;color:#222;text-align:center;padding:30px}
+    .card{display:inline-block;background:#fff;padding:20px;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,.06);max-width:420px;width:92%}
+    img{border-radius:8px;border:1px solid #ddd}
+    .pair{font-weight:bold;color:green}
   </style>
 </head>
 <body>
-  <h1>DansBot WhatsApp Dashboard</h1>
-  <div id="status" class="status">Loading connection status...</div>
-
+  <h1>🤖 DansDan WhatsApp Bot</h1>
   <div class="card">
-    <h3>Pairing Code</h3>
-    <p id="pairingCode" class="pairing">⌛ Waiting for code...</p>
-  </div>
-
-  <div class="card">
-    <h3>QR Code Login</h3>
-    <img id="qrImage" src="/qr.png" alt="QR Code">
-  </div>
-
-  <div class="card">
-    <h3>Generate Pairing Code</h3>
-    <form id="pairingForm">
-      <input type="text" id="phone" name="phone" placeholder="e.g. 254712345678" required>
-      <button type="submit">Generate Code</button>
+    <p id="status">Loading status...</p>
+    <p>Pairing: <span id="pair" class="pair">⌛ waiting</span></p>
+    <div><img id="qr" src="/qr.png" width="240" alt="QR (if available)"></div>
+    <form id="frm" style="margin-top:12px">
+      <input id="phone" placeholder="e.g. 254712345678" style="padding:8px;width:68%" required>
+      <button style="padding:8px 10px">Generate</button>
     </form>
   </div>
 
-  <script>
-    async function updateStatus() {
-      try {
-        const res = await fetch('/status');
-        const data = await res.json();
-        const statusEl = document.getElementById('status');
-        const pairingEl = document.getElementById('pairingCode');
-
-        const colorClass = data.connection || 'idle';
-        const emoji = {
-          connected: '🟢',
-          reconnecting: '🟡',
-          connecting: '🟠',
-          disconnected: '🔴',
-          idle: '⚪'
-        }[data.connection] || '⚪';
-
-        statusEl.innerHTML = `Status: ${emoji} <span class="${colorClass}">${data.connection?.toUpperCase()}</span>`;
-        pairingEl.textContent = data.connection === 'connected' ? '✅ Connected' : pairingEl.textContent;
-
-      } catch (err) {
-        console.error('Failed to fetch status:', err);
-      }
+<script>
+ async function refresh() {
+  try {
+    const res = await fetch('/status'); const data = await res.json();
+    const s = data.connection || 'idle';
+    const emoji = { connected:'🟢', reconnecting:'🟡', connecting:'🟠', disconnected:'🔴', qr:'🟡', idle:'⚪', error:'❌' }[s]||'⚪';
+    document.getElementById('status').innerText = `Status: ${emoji} ${s.toUpperCase()}`;
+    const pairTxt = await (await fetch('/status')).json();
+    const pairingFileRes = await fetch('/pairing.txt').catch(()=>null);
+    if (pairingFileRes && pairingFileRes.ok) {
+      const t = await pairingFileRes.text(); if (t) document.getElementById('pair').innerText = t;
     }
+  } catch (e) {}
+  document.getElementById('qr').src = '/qr.png?cache=' + Date.now();
+ }
+ setInterval(refresh, 5000); refresh();
 
-    // Auto-refresh dashboard every 5 seconds
-    setInterval(updateStatus, 5000);
-    updateStatus();
-
-    // Handle pairing code form
-    document.getElementById('pairingForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const phone = document.getElementById('phone').value;
-      await fetch('/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `phone=${encodeURIComponent(phone)}`
-      });
-      setTimeout(updateStatus, 2000);
-    });
-
-    // Auto-refresh QR image every 8 seconds
-    setInterval(() => {
-      document.getElementById('qrImage').src = `/qr.png?cache=${Date.now()}`;
-    }, 8000);
-  </script>
+ document.getElementById('frm').addEventListener('submit', async (e)=>{
+   e.preventDefault();
+   const phone = document.getElementById('phone').value.trim();
+   await fetch('/generate', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:`phone=${encodeURIComponent(phone)}`});
+   setTimeout(refresh, 1500);
+ });
+</script>
 </body>
 </html>
