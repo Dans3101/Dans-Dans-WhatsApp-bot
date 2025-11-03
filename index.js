@@ -1,62 +1,39 @@
-import express from 'express';
-import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
-import { startSession, botStatus } from './src/botManager.js';
-import { initTelegramBot, sendTelegramLog } from './src/telegramManager.js';
+// index.js
+// -----------------------------------------------------------------------------
+// 🚀 DansBot Main Entry — Express Dashboard + WhatsApp Bot Controller
+// -----------------------------------------------------------------------------
 
-dotenv.config();
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+import { existsSync, mkdirSync } from "fs";
+import { dashboardRouter } from "./dashboard.js";
+import { startSession } from "./botManager.js";
+import { log } from "./utils.js";
+
+// --- Setup ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
 const app = express();
-
 const PORT = process.env.PORT || 3000;
-const publicPath = path.join(process.cwd(), 'public');
-if (!existsSync(publicPath)) mkdirSync(publicPath);
+const publicPath = path.join(process.cwd(), "public");
 
+// --- Ensure public folder exists ---
+if (!existsSync(publicPath)) mkdirSync(publicPath, { recursive: true });
+
+// --- Middleware ---
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(publicPath));
 
-app.get('/', (req, res) => {
-  let pairingCode = '';
-  const pairingFile = path.join(publicPath, 'pairing.txt');
-  if (existsSync(pairingFile)) pairingCode = readFileSync(pairingFile, 'utf8').trim();
+// --- Routes ---
+app.use("/", dashboardRouter);
 
-  res.send(`
-    <html>
-      <body style="text-align:center; font-family:Arial; padding:40px;">
-        <h1>🤖 DansDan WhatsApp Dashboard</h1>
-        <h2>Status: <span style="color:${
-          botStatus.connectionColor
-        }">${botStatus.connectionEmoji} ${botStatus.connection.toUpperCase()}</span></h2>
-        <p>Last Update: ${new Date(botStatus.lastUpdate).toLocaleString()}</p>
-        <hr/>
-        <h3>Pairing Code</h3>
-        <p style="font-size:22px; color:green;">${pairingCode || '⌛ Waiting for code...'}</p>
-        <img src="/qr.png" width="250" style="border:1px solid #ccc; margin:20px;">
-        <form method="POST" action="/generate">
-          <input name="phone" placeholder="e.g. 2547xxxxxxxx" required style="padding:8px;">
-          <button type="submit" style="padding:8px 16px;">Generate Code</button>
-        </form>
-      </body>
-    </html>
-  `);
-});
+// --- Health Check (for Render or UptimeRobot) ---
+app.get("/health", (req, res) => res.json({ status: "ok" }));
 
-app.post('/generate', (req, res) => {
-  const { phone } = req.body;
-  if (!phone) return res.send('❌ Please enter a phone number.');
-  startSession('main', phone.trim());
-  res.redirect('/');
-});
-
-app.get('/status', (req, res) => res.json(botStatus));
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
-
-app.listen(PORT, async () => {
-  console.log(`🌍 Server running on port ${PORT}`);
-  await initTelegramBot();
-  await startSession('main');
-  sendTelegramLog('✅ DansDan bot started successfully.');
+// --- Start Server ---
+app.listen(PORT, () => {
+  log(`🌐 Dashboard running at: http://localhost:${PORT}`, "success");
+  startSession("main"); // auto-start bot session
 });
