@@ -1,64 +1,115 @@
 // src/telegramManager.js
-import { Telegraf } from "telegraf";
+import TelegramBot from "node-telegram-bot-api";
+import { log } from "./utils.js";
 import fs from "fs";
-import dotenv from "dotenv";
-dotenv.config();
 
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-
-let bot = null;
-let enabled = false;
+// global bot + admin reference
+export let bot = null;
+let ADMIN_CHAT_ID = null;
 
 export async function initTelegramBot() {
-  if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.log("⚠️ Telegram not configured (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing).");
-    enabled = false;
-    return;
-  }
-  bot = new Telegraf(TELEGRAM_TOKEN);
-  enabled = true;
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID || null;
 
-  // simple commands for control
-  bot.start(async (ctx) => {
-    await ctx.reply("🤖 DansDan Telegram bridge active. You will receive QR/pairing notifications here.");
+  if (!token) throw new Error("TELEGRAM_BOT_TOKEN not set in .env");
+
+  bot = new TelegramBot(token, { polling: true });
+  ADMIN_CHAT_ID = chatId;
+
+  log("🤖 Telegram bot started with polling", "success");
+
+  // --- BASIC COMMANDS ---
+  bot.onText(/^\/start$/, async (msg) => {
+    await bot.sendMessage(
+      msg.chat.id,
+      `👋 *Welcome to DansBot Control Panel!*
+
+Use the commands below to control your WhatsApp bot:
+
+📋 *Commands available:*
+• /status — Check WhatsApp connection
+• /link <phone> — Generate WhatsApp pairing code (e.g. /link 254712345678)
+• /restart — Restart WhatsApp session
+• /stop — Stop current session
+• /help — Show this help again`,
+      { parse_mode: "Markdown" }
+    );
   });
 
-  bot.command("status", async (ctx) => {
-    await ctx.reply("📡 Status command received. Use the web dashboard for details.");
+  bot.onText(/^\/help$/, async (msg) => bot.emit("text", msg));
+
+  bot.onText(/^\/status$/, async (msg) => {
+    const { botStatus } = await import("./botManager.js");
+    const s = botStatus;
+    const text = `📊 *WhatsApp Status*
+• Connection: ${s.connectionEmoji} ${s.connection}
+• Last Update: ${s.lastUpdate}`;
+    await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
   });
 
-  // Launch bot (long polling)
-  try {
-    await bot.launch({ dropPendingUpdates: true });
-    console.log("📨 Telegram bot started (Telegraf).");
-  } catch (e) {
-    console.warn("⚠️ Telegram bot launch error:", e?.message || e);
-  }
+  bot.onText(/^\/link (.+)$/, async (msg, match) => {
+    const phone = match[1].trim();
+    if (!/^\d+$/.test(phone)) {
+      return bot.sendMessage(msg.chat.id, "❌ Invalid phone number. Use digits only.");
+    }
+    await bot.sendMessage(msg.chat.id, `🔗 Requesting pairing code for ${phone}...`);
+    try {
+      const { startSession } = await import("./botManager.js");
+      await startSession("main", phone);
+      await bot.sendMessage(msg.chat.id, "✅ Pairing request sent — check here for QR or code soon.");
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
+  });
 
-  // graceful shutdown
-  process.once("SIGINT", () => bot.stop("SIGINT"));
-  process.once("SIGTERM", () => bot.stop("SIGTERM"));
+  bot.onText(/^\/restart$/, async (msg) => {
+    await bot.sendMessage(msg.chat.id, "♻️ Restarting WhatsApp session...");
+    try {
+      const { startSession } = await import("./botManager.js");
+      await startSession("main");
+      await bot.sendMessage(msg.chat.id, "✅ Restart complete!");
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Restart failed: ${err.message}`);
+    }
+  });
+
+  bot.onText(/^\/stop$/, async (msg) => {
+    await bot.sendMessage(msg.chat.id, "🛑 Stopping WhatsApp session...");
+    try {
+      const { stopSession } = await import("./botManager.js");
+      await stopSession();
+      await bot.sendMessage(msg.chat.id, "✅ Session stopped.");
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Stop failed: ${err.message}`);
+    }
+  });
+
+  // catch-all message handler
+  bot.on("message", async (msg) => {
+    if (!msg.text.startsWith("/")) {
+      await bot.sendMessage(msg.chat.id, "⚙️ Use /start to see available commands.");
+    }
+  });
+
+  return bot;
 }
 
-export async function sendTelegramMessage(text) {
-  if (!enabled || !bot) return;
+// --- UTILITIES USED GLOBALLY ---
+export async function sendTelegramMessage(message) {
   try {
-    await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, text, { parse_mode: "HTML" });
+    if (!bot || !ADMIN_CHAT_ID) return;
+    await bot.sendMessage(ADMIN_CHAT_ID, message, { parse_mode: "HTML" });
   } catch (err) {
-    console.error("❌ Telegram sendMessage error:", err?.message || err);
+    console.error("Telegram send error:", err.message);
   }
 }
 
 export async function sendTelegramPhoto(filePath, caption = "") {
-  if (!enabled || !bot) return;
   try {
-    if (!fs.existsSync(filePath)) {
-      console.warn("sendTelegramPhoto: file not found:", filePath);
-      return;
-    }
-    await bot.telegram.sendPhoto(TELEGRAM_CHAT_ID, { source: fs.createReadStream(filePath) }, { caption });
+    if (!bot || !ADMIN_CHAT_ID) return;
+    if (!fs.existsSync(filePath)) return;
+    await bot.sendPhoto(ADMIN_CHAT_ID, filePath, { caption });
   } catch (err) {
-    console.error("❌ Telegram sendPhoto error:", err?.message || err);
+    console.error("Telegram photo send error:", err.message);
   }
 }
