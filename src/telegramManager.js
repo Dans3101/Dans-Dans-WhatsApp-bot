@@ -1,85 +1,64 @@
 // src/telegramManager.js
-// Simple Telegram integration using Telegraf.
-// Exposes: initTelegramBot(), sendTelegramMessage(), sendTelegramPhoto()
-
-import { Telegraf } from 'telegraf';
-import fs from 'fs';
-import dotenv from 'dotenv';
+import { Telegraf } from "telegraf";
+import fs from "fs";
+import dotenv from "dotenv";
 dotenv.config();
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID; // numeric or string chat id
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 let bot = null;
 let enabled = false;
 
-export function initTelegramBot() {
+export async function initTelegramBot() {
   if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.warn('⚠️ Telegram not configured (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID). Telegram features disabled.');
+    console.log("⚠️ Telegram not configured (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing).");
     enabled = false;
     return;
   }
-
   bot = new Telegraf(TELEGRAM_TOKEN);
   enabled = true;
 
-  // simple command handlers (you can extend)
-  bot.command('start', async (ctx) => {
-    await ctx.reply('🤖 DansDan Telegram bridge is active. You will receive QR/pairing notifications here.');
+  // simple commands for control
+  bot.start(async (ctx) => {
+    await ctx.reply("🤖 DansDan Telegram bridge active. You will receive QR/pairing notifications here.");
   });
 
-  bot.command('status', async (ctx) => {
-    await ctx.reply('📡 Status request received. Check the web dashboard or /status endpoint for live info.');
+  bot.command("status", async (ctx) => {
+    await ctx.reply("📡 Status command received. Use the web dashboard for details.");
   });
 
-  // do NOT use polling in Render; use bot.launch() but stop webhook/polling issues:
-  // Telegraf will try to use long polling which is OK for many hosts. If you prefer no polling, set polling:false
+  // Launch bot (long polling)
   try {
-    bot.launch({ dropPendingUpdates: true }).then(() => {
-      console.log('📨 Telegram bot launched (Telegraf).');
-    }).catch((e) => {
-      console.warn('⚠️ Telegram launch warning:', e?.message || e);
-    });
+    await bot.launch({ dropPendingUpdates: true });
+    console.log("📨 Telegram bot started (Telegraf).");
   } catch (e) {
-    console.warn('⚠️ Telegram launch failed:', e?.message || e);
+    console.warn("⚠️ Telegram bot launch error:", e?.message || e);
   }
 
-  // graceful stop on exit
-  process.once('SIGINT', () => bot.stop('SIGINT'));
-  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  // graceful shutdown
+  process.once("SIGINT", () => bot.stop("SIGINT"));
+  process.once("SIGTERM", () => bot.stop("SIGTERM"));
 }
 
 export async function sendTelegramMessage(text) {
   if (!enabled || !bot) return;
   try {
-    await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, text, { parse_mode: 'HTML' });
+    await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, text, { parse_mode: "HTML" });
   } catch (err) {
-    console.error('❌ Failed to send Telegram message:', err?.message || err);
+    console.error("❌ Telegram sendMessage error:", err?.message || err);
   }
 }
 
-export async function sendTelegramPhoto(filePath, caption = '') {
+export async function sendTelegramPhoto(filePath, caption = "") {
   if (!enabled || !bot) return;
   try {
     if (!fs.existsSync(filePath)) {
-      console.warn('⚠️ sendTelegramPhoto: file does not exist:', filePath);
+      console.warn("sendTelegramPhoto: file not found:", filePath);
       return;
     }
     await bot.telegram.sendPhoto(TELEGRAM_CHAT_ID, { source: fs.createReadStream(filePath) }, { caption });
   } catch (err) {
-    console.error('❌ Failed to send Telegram photo:', err?.message || err);
-  }
-}
-
-export async function sendTelegramFile(filePath, caption = '') {
-  if (!enabled || !bot) return;
-  try {
-    if (!fs.existsSync(filePath)) {
-      console.warn('⚠️ sendTelegramFile: file does not exist:', filePath);
-      return;
-    }
-    await bot.telegram.sendDocument(TELEGRAM_CHAT_ID, { source: fs.createReadStream(filePath) }, { caption });
-  } catch (err) {
-    console.error('❌ Failed to send Telegram file:', err?.message || err);
+    console.error("❌ Telegram sendPhoto error:", err?.message || err);
   }
 }
