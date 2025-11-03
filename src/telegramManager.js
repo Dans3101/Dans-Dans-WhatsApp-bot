@@ -3,26 +3,32 @@ import TelegramBot from "node-telegram-bot-api";
 import { log } from "./utils.js";
 import fs from "fs";
 
-// global bot + admin reference
 export let bot = null;
-let ADMIN_CHAT_ID = null;
+export let ADMIN_CHAT_ID = null;
 
 export async function initTelegramBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID || null;
+  const envChatId = process.env.TELEGRAM_CHAT_ID || null;
 
-  if (!token) throw new Error("TELEGRAM_BOT_TOKEN not set in .env");
+  if (!token) throw new Error("❌ TELEGRAM_BOT_TOKEN not set in .env");
 
   bot = new TelegramBot(token, { polling: true });
-  ADMIN_CHAT_ID = chatId;
+  ADMIN_CHAT_ID = envChatId;
 
   log("🤖 Telegram bot started with polling", "success");
 
-  // --- BASIC COMMANDS ---
+  // --- /start ---
   bot.onText(/^\/start$/, async (msg) => {
-    await bot.sendMessage(
-      msg.chat.id,
-      `👋 *Welcome to DansBot Control Panel!*
+    if (!ADMIN_CHAT_ID) {
+      ADMIN_CHAT_ID = msg.chat.id;
+      log(`💬 Detected new admin chat ID: ${ADMIN_CHAT_ID}`, "info");
+      await bot.sendMessage(
+        ADMIN_CHAT_ID,
+        "✅ Admin chat linked automatically.\nI'll send all alerts here."
+      );
+    }
+
+    const helpText = `👋 *Welcome to DansBot Control Panel!*
 
 Use the commands below to control your WhatsApp bot:
 
@@ -31,13 +37,17 @@ Use the commands below to control your WhatsApp bot:
 • /link <phone> — Generate WhatsApp pairing code (e.g. /link 254712345678)
 • /restart — Restart WhatsApp session
 • /stop — Stop current session
-• /help — Show this help again`,
-      { parse_mode: "Markdown" }
-    );
+• /help — Show this help again`;
+
+    await bot.sendMessage(msg.chat.id, helpText, { parse_mode: "Markdown" });
   });
 
-  bot.onText(/^\/help$/, async (msg) => bot.emit("text", msg));
+  // --- /help ---
+  bot.onText(/^\/help$/, async (msg) => {
+    bot.emit("text", { chat: msg.chat });
+  });
 
+  // --- /status ---
   bot.onText(/^\/status$/, async (msg) => {
     const { botStatus } = await import("./botManager.js");
     const s = botStatus;
@@ -47,6 +57,7 @@ Use the commands below to control your WhatsApp bot:
     await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
   });
 
+  // --- /link ---
   bot.onText(/^\/link (.+)$/, async (msg, match) => {
     const phone = match[1].trim();
     if (!/^\d+$/.test(phone)) {
@@ -57,34 +68,42 @@ Use the commands below to control your WhatsApp bot:
       const { startSession } = await import("./botManager.js");
       await startSession("main", phone);
       await bot.sendMessage(msg.chat.id, "✅ Pairing request sent — check here for QR or code soon.");
+      sendTelegramMessage(`📞 Pairing initiated for: ${phone}`);
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+      sendTelegramMessage(`❌ Pairing failed: ${err.message}`);
     }
   });
 
+  // --- /restart ---
   bot.onText(/^\/restart$/, async (msg) => {
     await bot.sendMessage(msg.chat.id, "♻️ Restarting WhatsApp session...");
     try {
       const { startSession } = await import("./botManager.js");
       await startSession("main");
       await bot.sendMessage(msg.chat.id, "✅ Restart complete!");
+      sendTelegramMessage("🔁 WhatsApp session restarted successfully.");
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ Restart failed: ${err.message}`);
+      sendTelegramMessage(`❌ Restart failed: ${err.message}`);
     }
   });
 
+  // --- /stop ---
   bot.onText(/^\/stop$/, async (msg) => {
     await bot.sendMessage(msg.chat.id, "🛑 Stopping WhatsApp session...");
     try {
       const { stopSession } = await import("./botManager.js");
       await stopSession();
       await bot.sendMessage(msg.chat.id, "✅ Session stopped.");
+      sendTelegramMessage("🛑 WhatsApp session stopped manually.");
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ Stop failed: ${err.message}`);
+      sendTelegramMessage(`❌ Stop failed: ${err.message}`);
     }
   });
 
-  // catch-all message handler
+  // --- Catch-all ---
   bot.on("message", async (msg) => {
     if (!msg.text.startsWith("/")) {
       await bot.sendMessage(msg.chat.id, "⚙️ Use /start to see available commands.");
@@ -94,7 +113,7 @@ Use the commands below to control your WhatsApp bot:
   return bot;
 }
 
-// --- UTILITIES USED GLOBALLY ---
+// --- Global send helpers ---
 export async function sendTelegramMessage(message) {
   try {
     if (!bot || !ADMIN_CHAT_ID) return;
