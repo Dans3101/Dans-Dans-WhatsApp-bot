@@ -1,54 +1,36 @@
-// utils.js
-// -----------------------------------------------------------------------------
-// 🔹 Utility Functions for DansBot
-// -----------------------------------------------------------------------------
-
+// src/utils.js
 import fs from "fs";
 import path from "path";
 import chalk from "chalk";
 
-// --- Timestamped logger ---
-export function log(message, type = "info") {
-  const time = new Date().toLocaleTimeString();
-  const colors = {
+export function log(message, level = "info") {
+  const time = new Date().toLocaleString();
+  const map = {
     info: chalk.cyan,
     success: chalk.green,
-    error: chalk.red,
     warn: chalk.yellow,
+    error: chalk.red
   };
-  const color = colors[type] || chalk.white;
+  const color = map[level] || chalk.white;
   console.log(color(`[${time}] ${message}`));
 }
 
-// --- Ensure directory exists ---
-export function ensureDir(dir) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+export function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
 }
 
-// --- Write safe file ---
-export function saveFile(filePath, data) {
+export function saveJSON(filePath, data) {
   ensureDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, data);
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
-// --- Read safe file ---
-export function readFileSafe(filePath, fallback = "") {
+export function readJSON(filePath, fallback = null) {
   try {
-    return fs.existsSync(filePath)
-      ? fs.readFileSync(filePath, "utf8")
-      : fallback;
+    if (!fs.existsSync(filePath)) return fallback;
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch {
     return fallback;
   }
 }
 
-// --- Delay helper ---
-export const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// --- Format uptime ---
-export function formatUptime(ms) {
-  const sec = Math.floor(ms / 1000) % 60;
-  const min = Math.floor(ms / (1000 * 60)) % 60;
-  const hrs = Math.floor(ms / (1000 * 60 * 60));
-  return `${hrs}h ${min}m ${sec}s`;
-}
+export const delay = ms => new Promise(r => setTimeout(r, ms));
