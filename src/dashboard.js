@@ -1,86 +1,96 @@
-// dashboard.js
-// -----------------------------------------------------------------------------
-// 🔹 Dashboard Routes and UI for DansBot
-// -----------------------------------------------------------------------------
-
+// src/dashboard.js
 import express from "express";
 import path from "path";
 import { existsSync, readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { botStatus, startSession } from "./botManager.js";
+import { botStatus } from "./botManager.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const publicPath = path.join(process.cwd(), "public");
+const router = express.Router();
+const PUBLIC = path.join(process.cwd(), "public");
 
-export const dashboardRouter = express.Router();
-
-// --- Dashboard Page ---
-dashboardRouter.get("/", (req, res) => {
+router.get("/", (req, res) => {
   let pairingCode = "";
-  const pairingFile = path.join(publicPath, "pairing.txt");
+  const pairingFile = path.join(PUBLIC, "pairing.txt");
   if (existsSync(pairingFile)) pairingCode = readFileSync(pairingFile, "utf8").trim();
 
-  const statusColors = {
+  const color = {
     connected: "green",
     connecting: "orange",
-    reconnecting: "gold",
+    qr: "gold",
     disconnected: "red",
     idle: "gray",
-  };
+    reconnecting: "gold",
+    error: "red"
+  }[botStatus.connection] || "gray";
 
-  const color = statusColors[botStatus.connection] || "gray";
-  const emoji =
-    botStatus.connection === "connected"
-      ? "🟢"
-      : botStatus.connection === "reconnecting"
-      ? "🟡"
-      : botStatus.connection === "connecting"
-      ? "🟠"
-      : botStatus.connection === "disconnected"
-      ? "🔴"
-      : "⚪";
+  const emoji = {
+    connected: "🟢",
+    reconnecting: "🟡",
+    connecting: "🟠",
+    disconnected: "🔴",
+    qr: "🟡",
+    idle: "⚪",
+    error: "❌"
+  }[botStatus.connection] || "⚪";
 
   res.send(`
     <html>
-      <body style="text-align:center; padding:40px; font-family: Arial, sans-serif;">
-        <h1>DansBot WhatsApp Dashboard</h1>
-        <h2>Status: ${emoji} 
-          <span style="color:${color};">${botStatus.connection.toUpperCase()}</span>
-        </h2>
-        <p>Last Update: ${new Date(botStatus.lastUpdate).toLocaleString()}</p>
-        <hr/>
-        <div style="margin:30px;">
+      <head>
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>DansDan Dashboard</title>
+        <style>
+          body{font-family:Arial,Helvetica,sans-serif;text-align:center;padding:28px;background:#f7f8fb}
+          .card{display:inline-block;background:#fff;padding:18px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.06);max-width:420px;width:90%;}
+          img{border-radius:8px;border:1px solid #ddd}
+          .pairing{font-weight:bold;color:green;font-size:18px}
+        </style>
+      </head>
+      <body>
+        <h1>🤖 DansDan WhatsApp Bot</h1>
+        <div class="card">
+          <p>Status: <span style="color:${color}">${emoji} ${botStatus.connection.toUpperCase()}</span></p>
+          <p>Last Update: ${new Date(botStatus.lastUpdate).toLocaleString()}</p>
+          <hr/>
           <h3>Pairing Code</h3>
-          <p style="font-size:22px; color:green;">
-            ${pairingCode || "⌛ Waiting for code..."}
-          </p>
-        </div>
-        <div style="margin:30px;">
-          <h3>QR Code Login</h3>
-          <img src="/qr.png" width="250" style="border:1px solid #ccc;">
-        </div>
-        <div style="margin-top:30px;">
-          <form method="POST" action="/generate">
-            <input type="text" name="phone" placeholder="e.g. 254712345678" style="padding:8px;" required>
-            <button type="submit" style="padding:8px 16px;">Generate Pairing Code</button>
+          <p class="pairing">${pairingCode || '⌛ Waiting for code...'}</p>
+          <h3>QR Code</h3>
+          <img src="/qr.png" width="250" id="qr" alt="QR (if available)" />
+          <form method="POST" action="/generate" style="margin-top:12px;">
+            <input name="phone" placeholder="e.g. 254712345678" style="padding:8px;width:70%" required />
+            <button type="submit" style="padding:8px 12px;margin-left:6px">Generate</button>
           </form>
         </div>
+        <script>
+          setInterval(()=> {
+            const img = document.getElementById('qr');
+            img.src = '/qr.png?cache='+Date.now();
+            fetch('/status').catch(()=>{});
+          }, 8000);
+        </script>
       </body>
     </html>
   `);
 });
 
-// --- Generate Pairing Code ---
-dashboardRouter.post("/generate", (req, res) => {
-  const phoneNumber = req.body.phone.trim();
-  if (!phoneNumber)
-    return res.send("<p>❌ Please provide a phone number.</p><a href='/'>Go back</a>");
-
-  startSession("main", phoneNumber);
-  res.redirect("/");
+// generate pairing code route (handled by botManager via startSession)
+router.post("/generate", (req, res) => {
+  const body = [];
+  req.on("data", chunk => body.push(chunk));
+  req.on("end", () => {
+    const parsed = new URLSearchParams(Buffer.concat(body).toString());
+    const phone = parsed.get("phone")?.trim();
+    if (!phone) return res.send("<p>Provide phone</p><a href='/'>Back</a>");
+    import("./botManager.js").then(mod => {
+      mod.startSession(process.env.SESSION_ID || "main", phone).catch(err => console.error(err));
+    });
+    res.redirect("/");
+  });
 });
 
-// --- API Routes ---
-dashboardRouter.get("/status", (req, res) => res.json(botStatus));
-dashboardRouter.get("/health", (req, res) => res.json({ status: "ok" }));
+router.get("/status", (req, res) => {
+  res.json(botStatus);
+});
+
+router.get("/health", (req, res) => res.json({ status: "ok" }));
+
+export { router as dashboardRouter };
+export const dashboard = dashboardRouter; // backwards compat if needed
