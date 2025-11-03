@@ -1,26 +1,21 @@
 services:
   - type: web
-    name: dansbot
+    name: dans-dan
     env: node
     plan: free
     region: frankfurt
-
-    buildCommand: yarn install --force
-    startCommand: yarn start
-
+    buildCommand: npm install
+    startCommand: npm start
     autoDeploy: true
     healthCheckPath: /health
-
     envVars:
-      - key: NODE_ENV
-        value: production
       - key: PORT
         value: 3000
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
       - key: SESSION_ID
-        sync: false
-      - key: OWNER_NUMBER
-        value: "2547xxxxxxxx"
-      - key: BOT_NAME
-        value: "DansBot"
-      - key: DATABASE_URL
-        sync: false
+        value: main
