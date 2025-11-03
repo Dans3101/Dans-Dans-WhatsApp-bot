@@ -1,8 +1,4 @@
 // src/botManager.js
-// ----------------------------------------------------------
-// 🔹 WhatsApp Bot Manager — Stable + Auto-Reconnect Version
-// ----------------------------------------------------------
-
 import {
   makeWASocket,
   useMultiFileAuthState,
@@ -19,17 +15,11 @@ import { log, ensureDir } from "./utils.js";
 
 dotenv.config();
 
-// ----------------------------------------------------------
-// Paths
-// ----------------------------------------------------------
 const PUBLIC_DIR = path.join(process.cwd(), "public");
-const AUTH_ROOT = path.join(process.cwd(), "sessions"); // persistent disk mount
+const AUTH_ROOT = path.join(process.cwd(), "auth");
 ensureDir(PUBLIC_DIR);
 ensureDir(AUTH_ROOT);
 
-// ----------------------------------------------------------
-// Status Tracker
-// ----------------------------------------------------------
 export let botStatus = {
   connection: "idle",
   lastUpdate: new Date().toISOString(),
@@ -45,7 +35,7 @@ function setStatus(status, extra = {}) {
     lastUpdate: new Date().toISOString(),
     ...extra
   };
-  const colors = {
+  const map = {
     idle: ["⚪", "gray"],
     connecting: ["🟠", "orange"],
     qr: ["🟡", "gold"],
@@ -54,20 +44,18 @@ function setStatus(status, extra = {}) {
     reconnecting: ["🟡", "gold"],
     error: ["❌", "red"]
   };
-  const [emoji, color] = colors[status] || ["⚪", "gray"];
-  botStatus.connectionEmoji = emoji;
-  botStatus.connectionColor = color;
+  const pair = map[botStatus.connection] || ["⚪", "gray"];
+  botStatus.connectionEmoji = pair[0];
+  botStatus.connectionColor = pair[1];
 }
 
-// ----------------------------------------------------------
-// QR + Pairing Helpers
-// ----------------------------------------------------------
 async function saveQr(qr) {
   try {
     const qrPath = path.join(PUBLIC_DIR, "qr.png");
-    await QRCode.toFile(qrPath, qr, { errorCorrectionLevel: "H", margin: 1, width: 600 });
-    log("🟡 New QR saved: /public/qr.png", "info");
-    sendTelegramPhoto(qrPath, "📲 New QR — scan to link WhatsApp").catch(() => {});
+    await QRCode.toFile(qrPath, qr, { errorCorrectionLevel: "H", margin: 1, width: 700 });
+    log("Saved QR to " + qrPath, "info");
+    await sendTelegramMessage("📲 <b>New WhatsApp QR code generated!</b>");
+    await sendTelegramPhoto(qrPath, "Scan this QR to link WhatsApp.");
   } catch (e) {
     console.error("Failed to save QR:", e);
   }
@@ -77,29 +65,27 @@ function savePairing(code) {
   try {
     const f = path.join(PUBLIC_DIR, "pairing.txt");
     fs.writeFileSync(f, code, "utf8");
-    log("🔗 Pairing code saved to " + f, "info");
-    sendTelegramMessage(`<b>🔗 Pairing Code:</b>\n<code>${code}</code>`).catch(() => {});
+    log("Pairing code saved to " + f, "info");
+    sendTelegramMessage(`<b>🔗 New WhatsApp Pairing Code</b>\n<code>${code}</code>`).catch(()=>{});
   } catch (e) {
     console.error("Failed to save pairing:", e);
   }
 }
 
-// ----------------------------------------------------------
-// Session Controller
-// ----------------------------------------------------------
 let currentSock = null;
-let reconnectAttempts = 0;
+let reconnectTimer = null;
 
 export async function startSession(sessionId = "main", phoneNumber = null) {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+
   setStatus("connecting");
-  log(`🚀 Starting session "${sessionId}" phone: ${phoneNumber || "none"}`, "info");
+  log(`Starting session "${sessionId}" phone: ${phoneNumber || "none"}`, "info");
+  await sendTelegramMessage(`🟠 Starting WhatsApp session <b>${sessionId}</b>...`);
 
   try {
     const sessionDir = path.join(AUTH_ROOT, sessionId);
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 0] }));
-
-    log(`Using Baileys v${version.join(".")}`, "info");
 
     const sock = makeWASocket({
       version,
@@ -107,31 +93,27 @@ export async function startSession(sessionId = "main", phoneNumber = null) {
       printQRInTerminal: false,
       browser: ["DansBot", "Chrome", "122"]
     });
-    currentSock = sock;
 
+    currentSock = sock;
     sock.ev.on("creds.update", saveCreds);
 
-    // ----------------------------------------------------------
-    // Connection Events
-    // ----------------------------------------------------------
     sock.ev.on("connection.update", async (update) => {
-      const { connection, qr, lastDisconnect } = update;
       try {
+        const { connection, qr, lastDisconnect } = update;
+
         if (qr) {
           setStatus("qr");
           await saveQr(qr);
         }
 
         if (connection === "connecting") {
-          log("🟠 Connecting to WhatsApp...", "info");
           setStatus("connecting");
         }
 
         if (connection === "open") {
-          reconnectAttempts = 0;
           setStatus("connected");
-          log("🟢 WhatsApp connected successfully!", "success");
-          sendTelegramMessage("✅ WhatsApp connected!").catch(() => {});
+          log("WhatsApp connected", "success");
+          await sendTelegramMessage("🟢 <b>WhatsApp connected successfully!</b>");
           const pairingFile = path.join(PUBLIC_DIR, "pairing.txt");
           if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
         }
@@ -141,109 +123,61 @@ export async function startSession(sessionId = "main", phoneNumber = null) {
             ? lastDisconnect.error.output.statusCode
             : lastDisconnect?.error?.statusCode || "unknown";
 
-          log(`Connection closed (code: ${statusCode})`, "warn");
+          log("Connection closed. code=" + statusCode, "warn");
           setStatus("disconnected", { lastError: statusCode });
-          sendTelegramMessage(`🔴 WhatsApp disconnected (code: ${statusCode})`).catch(() => {});
+          await sendTelegramMessage(`🔴 WhatsApp disconnected (code: ${statusCode})`);
 
-          if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
-            log("⚠️ Session logged out — needs re-pair.", "error");
-            setStatus("error", { lastError: "Logged out" });
+          if (statusCode === DisconnectReason.loggedOut) {
+            await sendTelegramMessage("⚠️ Session logged out — manual re-link required.");
             currentSock = null;
             return;
           }
 
-          // Exponential backoff reconnect
-          const delay = Math.min(15000, 2000 * ++reconnectAttempts);
-          log(`🔁 Attempting reconnect in ${delay / 1000}s...`, "info");
-          setStatus("reconnecting");
-          setTimeout(() => startSession(sessionId, phoneNumber), delay);
+          reconnectTimer = setTimeout(() => {
+            log("Attempting reconnect...", "info");
+            setStatus("reconnecting");
+            sendTelegramMessage("🟡 Reconnecting WhatsApp...").catch(()=>{});
+            startSession(sessionId, phoneNumber);
+          }, 3000);
         }
       } catch (e) {
         console.error("connection.update handler error:", e);
         setStatus("error", { lastError: String(e) });
+        sendTelegramMessage(`❌ connection.update error: ${e.message || e}`).catch(()=>{});
       }
     });
 
-    // ----------------------------------------------------------
-    // Pairing Request
-    // ----------------------------------------------------------
     if (phoneNumber) {
       try {
         const pairingFile = path.join(PUBLIC_DIR, "pairing.txt");
         if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
-        log(`📞 Requesting pairing code for ${phoneNumber}`, "info");
         const code = await sock.requestPairingCode(phoneNumber);
         savePairing(code);
         setStatus("qr");
       } catch (err) {
         console.error("Pairing request failed:", err);
         setStatus("error", { lastError: String(err) });
-        sendTelegramMessage(`❌ Pairing code error: ${err?.message || err}`).catch(() => {});
+        sendTelegramMessage(`❌ Pairing code error: ${err.message || err}`).catch(()=>{});
       }
     }
 
-    // ----------------------------------------------------------
-    // Message Listener
-    // ----------------------------------------------------------
-    sock.ev.on("messages.upsert", async (m) => {
-      try {
-        const messages = m.messages || [];
-        for (const msg of messages) {
-          if (!msg.message || msg.key.fromMe) continue;
-          const text =
-            msg.message.conversation ||
-            msg.message.extendedTextMessage?.text ||
-            msg.message.imageMessage?.caption ||
-            "";
-          if (!text) continue;
-
-          const from = msg.key.remoteJid;
-          const lc = text.trim().toLowerCase();
-
-          if (lc === ".ping") {
-            await sock.sendMessage(from, { text: "🏓 Pong!" }, { quoted: msg });
-          } else if (lc === ".alive") {
-            await sock.sendMessage(from, { text: "✅ DansBot is alive!" }, { quoted: msg });
-          } else if (lc === ".status") {
-            const st = `📊 Status:
-• connection: ${botStatus.connection}
-• last update: ${botStatus.lastUpdate}`;
-            await sock.sendMessage(from, { text: st }, { quoted: msg });
-          } else if (lc === ".menu") {
-            const menu = `📜 Menu:
-• .ping
-• .alive
-• .status
-• .menu`;
-            await sock.sendMessage(from, { text: menu }, { quoted: msg });
-          }
-        }
-      } catch (e) {
-        console.error("messages.upsert handler error:", e);
-      }
-    });
-
     return sock;
   } catch (err) {
-    console.error("❌ startSession fatal error:", err);
+    console.error("startSession fatal error:", err);
     setStatus("error", { lastError: String(err) });
-    sendTelegramMessage(`❌ startSession error: ${err?.message || err}`).catch(() => {});
-    const delay = Math.min(15000, 2000 * ++reconnectAttempts);
-    setTimeout(() => startSession(sessionId, phoneNumber), delay);
+    sendTelegramMessage(`❌ startSession error: ${err.message || err}`).catch(()=>{});
+    reconnectTimer = setTimeout(() => startSession(sessionId, phoneNumber), 5000);
     throw err;
   }
 }
 
-// ----------------------------------------------------------
-// Stop Session
-// ----------------------------------------------------------
 export async function stopSession() {
   try {
     if (currentSock) {
-      await currentSock.logout().catch(() => {});
+      await currentSock.logout().catch(()=>{});
       currentSock = null;
       setStatus("idle");
-      log("Session stopped manually.", "info");
+      await sendTelegramMessage("🛑 WhatsApp session stopped manually.");
     }
   } catch (e) {
     console.warn("stopSession error:", e);
